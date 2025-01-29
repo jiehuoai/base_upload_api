@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-multipart
+boto3
+python-dotenv
+aiofiles
+python-magic  # 用于文件类型检测 
