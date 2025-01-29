@@ -39,13 +39,6 @@ for var in required_env_vars:
     if not os.getenv(var):
         raise ValueError(f"Missing required environment variable: {var}")
 
-# 如果环境变量未被加载，直接设置（仅用于测试）
-if not os.getenv('R2_ACCOUNT_ID'):
-    os.environ['R2_ACCOUNT_ID'] = 'ad0490a1255bef48b67d2c6d79caddb9'
-    os.environ['R2_ACCESS_KEY_ID'] = 'ec2d51ac617d3383a444e04f3509df78'
-    os.environ['R2_SECRET_ACCESS_KEY'] = 'oHWl9EFVG_9JGe7Qlv445XQj8BojgoYd-7JN0d8g'
-    os.environ['R2_BUCKET_NAME'] = 'base-common-storage'
-
 app = FastAPI()
 
 # R2配置
@@ -79,14 +72,48 @@ except Exception as e:
 
 BUCKET_NAME = os.getenv('R2_BUCKET_NAME')
 
+# 在 FastAPI app 定义之前添加文件类型映射
+MIME_TYPE_DIRECTORIES = {
+    'image': 'images',  # image/jpeg, image/png 等都会存在 images 目录
+    'video': 'videos',  # video/mp4 等会存在 videos 目录
+    'audio': 'audios',  # audio/mpeg 等会存在 audios 目录
+    'application/pdf': 'documents/pdf',
+    'application/msword': 'documents/word',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'documents/word',
+    'application/vnd.ms-excel': 'documents/excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'documents/excel',
+    'text': 'documents/text',  # text/plain 等会存在 documents/text 目录
+}
+
+def get_directory_by_mime_type(content_type: str) -> str:
+    """根据 MIME 类型确定存储目录"""
+    if not content_type:
+        return 'others'
+    
+    # 获取主类型
+    main_type = content_type.split('/')[0]
+    
+    # 优先检查完整的 MIME 类型
+    if content_type in MIME_TYPE_DIRECTORIES:
+        return MIME_TYPE_DIRECTORIES[content_type]
+    
+    # 然后检查主类型
+    if main_type in MIME_TYPE_DIRECTORIES:
+        return MIME_TYPE_DIRECTORIES[main_type]
+    
+    return 'others'
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     try:
         print(f"Received file: {file.filename}")
         print(f"Content type: {file.content_type}")
         
+        # 获取文件目录
+        directory = get_directory_by_mime_type(file.content_type)
+        
         file_extension = file.filename.split('.')[-1] if '.' in file.filename else ''
-        file_key = f"{uuid.uuid4()}.{file_extension}" if file_extension else str(uuid.uuid4())
+        file_key = f"{directory}/{uuid.uuid4()}.{file_extension}" if file_extension else f"{directory}/{uuid.uuid4()}"
         
         # 创建临时文件
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -95,7 +122,6 @@ async def upload_file(file: UploadFile = File(...)):
             temp_file.flush()
             
             try:
-                # 修改上传参数，添加 ACL
                 with open(temp_file.name, 'rb') as f:
                     r2.put_object(
                         Bucket=BUCKET_NAME,
@@ -110,15 +136,15 @@ async def upload_file(file: UploadFile = File(...)):
             finally:
                 os.unlink(temp_file.name)
         
-        # 返回自定义域名的 URL
-        public_url = f"https://base-common-storage.jiehuo.ai/{file_key}"
+        public_url = f"https://bcs.jiehuo.ai/{file_key}"
         
         return {
             "success": True,
             "file_key": file_key,
             "url": public_url,
             "filename": file.filename,
-            "content_type": file.content_type
+            "content_type": file.content_type,
+            "directory": directory
         }
     except Exception as e:
         print(f"Upload error: {str(e)}")
